@@ -8,9 +8,16 @@
   <style>
     .layout {
       display: grid;
-      grid-template-columns: 280px 1fr;
+      grid-template-columns: 260px 1fr 340px;
       gap: 18px;
       align-items: stretch;
+      transition: grid-template-columns 0.2s ease;
+    }
+    .layout.hide-chat {
+      grid-template-columns: 260px 1fr;
+    }
+    .layout.hide-chat #chatPanel {
+      display: none;
     }
     .sidebar {
       padding: 16px;
@@ -64,6 +71,16 @@
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 10px;
+    }
+    .btn-icon {
+      width: 44px;
+      min-width: 44px;
+      height: 44px;
+      padding: 0;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
     .stepper {
       display: flex;
@@ -138,17 +155,20 @@
 </head>
 <body>
   <div class="app-shell">
-    <div class="flex glass" style="padding:16px 20px; align-items:center; gap:16px;">
+    <div class="flex glass" style="padding:16px 20px; align-items:center; gap:12px; flex-wrap:wrap;">
       <div class="brand">
         <div class="dot" style="background:linear-gradient(135deg,#2563eb,#2f80ed);"></div>
         <div>人康工具答疑</div>
       </div>
       <div class="tag">客服端</div>
       <div class="spacer"></div>
-      <button id="completedBtn" class="btn ghost">已完成工单</button>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <button id="completedBtn" class="btn ghost" style="padding:6px 10px;">已完成工单</button>
+        <button id="toggleChatBtn" class="btn ghost" style="padding:6px 10px;">隐藏对话</button>
+      </div>
     </div>
 
-    <div class="layout" style="margin-top:18px;">
+    <div class="layout" id="layoutGrid" style="margin-top:18px;">
       <div class="glass sidebar panel-full" id="ticketSidebar">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; gap:8px;">
           <div style="font-weight:700;">工单列表</div>
@@ -174,7 +194,6 @@
           <button id="backToList" class="btn ghost" style="padding:6px 12px;">返回</button>
         </div>
         <div id="ticketMeta" class="fade" style="margin-bottom:10px;"></div>
-
         <div id="stepper" class="stepper">
           <div class="step-node active" data-step="1">
             <span class="step-bubble">1</span><span>改写确认</span>
@@ -206,7 +225,7 @@
           <div class="section step-panel" id="step-2">
             <h4>步骤 2：知识召回确认</h4>
             <div style="display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
-              <button id="fetchKnowledgeBtn" class="btn ghost">自动召回知识</button>
+              <button id="fetchKnowledgeBtn" class="btn ghost">重新召回知识</button>
             </div>
             <textarea id="knowledgeInput" class="no-scrollbar" placeholder="召回的知识内容"></textarea>
             <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
@@ -218,7 +237,7 @@
           <div class="section step-panel" id="step-3">
             <h4>步骤 3：生成并确认回答</h4>
             <div style="display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
-              <button id="generateAnswerBtn" class="btn ghost">生成回答</button>
+              <button id="generateAnswerBtn" class="btn ghost">重新生成回答</button>
             </div>
             <textarea id="answerInput" class="no-scrollbar" placeholder="最终给客户的回答话术"></textarea>
             <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
@@ -231,6 +250,30 @@
             <h4>操作记录</h4>
             <div class="logs no-scrollbar" id="logsBox">暂无记录</div>
           </div>
+        </div>
+      </div>
+
+      <div class="glass panel-full" id="chatPanel" style="padding:16px; display:flex; flex-direction:column;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <div style="font-weight:700;">对话/补充</div>
+          <span class="fade" style="font-size:12px;">发送信息直达客户</span>
+        </div>
+        <div id="historyList" class="no-scrollbar" style="flex:1; overflow:auto; font-size:13px; line-height:1.6; background:#0c1426; border:1px solid var(--border); border-radius:12px; padding:10px; margin-bottom:10px;">暂无消息</div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+          <textarea id="agentMsgInput" class="no-scrollbar" placeholder="发送给客户的消息..." style="flex:1; min-height:52px; max-height:140px; padding-right:10px;"></textarea>
+          <button id="sendAgentMsgBtn" class="btn btn-icon" aria-label="发送">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path d="M3.5 12L5 7c.3-.9.4-1.4.8-1.8.4-.4.9-.6 2.1-1l10.7-3.2c1.9-.6 2.9-.8 3.5-.3.6.5.5 1.5.3 3.4L21.4 16c-.2 2-.3 3-.9 3.6-.6.6-1.6.5-3.6.3l-8.9-.9c-.7-.1-1.1-.2-1.4-.4-.3-.2-.5-.5-.6-.9L4 12.6c-.2-.4-.3-.6-.3-.6s-.1-.2-.2-.6V12Z" fill="url(#g1)" />
+              <path d="M5 12h5.5" stroke="white" stroke-width="1.6" stroke-linecap="round" />
+              <path d="M12 7l4 4-4 4" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              <defs>
+                <linearGradient id="g1" x1="4" y1="2" x2="18" y2="20" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#5aa8ff"/>
+                  <stop offset="1" stop-color="#3b82f6"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </button>
         </div>
       </div>
     </div>

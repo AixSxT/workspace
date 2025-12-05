@@ -27,11 +27,19 @@ const stepPanels = {
   2: document.getElementById("step-2"),
   3: document.getElementById("step-3"),
 };
+const historyList = document.getElementById("historyList");
+const agentMsgInput = document.getElementById("agentMsgInput");
+const sendAgentMsgBtn = document.getElementById("sendAgentMsgBtn");
+const layoutGrid = document.getElementById("layoutGrid");
+const chatPanel = document.getElementById("chatPanel");
+const toggleChatBtn = document.getElementById("toggleChatBtn");
 
 let currentId = null;
 let pollTimer = null;
 let currentStepUI = 1;
 let readonlyMode = false;
+let knowledgeLoading = false;
+let answerLoading = false;
 
 function applyReadonly() {
   const disable = readonlyMode;
@@ -152,6 +160,42 @@ function renderLogs(ticket) {
     .join("");
 }
 
+function renderHistory(ticket) {
+  if (!historyList) return;
+  const msgs = ticket.messages || [];
+  if (!msgs.length) {
+    historyList.innerText = "暂无消息";
+    return;
+  }
+  historyList.innerHTML = msgs
+    .map((m) => {
+      const isUser = m.role === "user";
+      const roleText = isUser
+        ? "用户"
+        : m.role === "agent"
+        ? "客服"
+        : m.role === "answer"
+        ? "工单解答"
+        : "系统";
+      const timeText = m.at ? new Date(m.at).toLocaleString() : "";
+      const bubbleColor = isUser
+        ? "linear-gradient(135deg,#3b82f6,#5aa8ff)"
+        : m.role === "answer"
+        ? "linear-gradient(135deg,#10b981,#34d399)"
+        : "#0f1a2f";
+      const textColor = isUser || m.role === "answer" ? "#f8fbff" : "var(--primary)";
+      const align = isUser ? "flex-end" : "flex-start";
+      return `
+        <div style="display:flex; justify-content:${align}; margin-bottom:10px;">
+          <div style="max-width:88%; padding:10px 12px; border-radius:12px; background:${bubbleColor}; color:${textColor}; border:1px solid var(--border); box-shadow:0 10px 20px rgba(0,0,0,0.25);">
+            <div style="font-weight:700; font-size:12px; opacity:0.85;">${roleText} · ${timeText}</div>
+            <div style="white-space:pre-wrap; margin-top:4px;">${m.text || ""}</div>
+          </div>
+        </div>`;
+    })
+    .join("");
+}
+
 function stepFromTicket(ticket) {
   if (!ticket) return 1;
   if (ticket.status === "done" || ticket.step === "done" || ticket.step === "answer_review") return 3;
@@ -206,6 +250,7 @@ function fillDetail(ticket) {
   knowledgeInput.value = ticket.knowledgeFinal || ticket.knowledgeDraft || "";
   answerInput.value = ticket.answerFinal || ticket.answerDraft || "";
   renderLogs(ticket);
+  renderHistory(ticket);
   const step = stepFromTicket(ticket);
   setStep(step);
   applyReadonly();
@@ -234,12 +279,13 @@ confirmStructureBtn.onclick = async () => {
   if (!currentId) return;
   try {
     confirmStructureBtn.disabled = true;
-    const ticket = await postAction(`/api/agent/tickets/${currentId}/confirm-structure`, {
-      structured: structuredInput.value,
-    });
-    fillDetail(ticket);
-    loadTickets();
-    setStep(2);
+  const ticket = await postAction(`/api/agent/tickets/${currentId}/confirm-structure`, {
+    structured: structuredInput.value,
+  });
+  fillDetail(ticket);
+  loadTickets();
+  autoFetchKnowledge(ticket.id);
+  setStep(2);
   } catch (e) {
     alert(e.message);
   } finally {
@@ -249,13 +295,21 @@ confirmStructureBtn.onclick = async () => {
 
 fetchKnowledgeBtn.onclick = async () => {
   if (!currentId) return;
+  if (knowledgeLoading) return;
   try {
+    knowledgeLoading = true;
+    knowledgeInput.value = knowledgeInput.value || "召回中，请稍候...";
+    knowledgeInput.readOnly = true;
     fetchKnowledgeBtn.disabled = true;
     fetchKnowledgeBtn.innerText = "召回中...";
     const ticket = await postAction(`/api/agent/tickets/${currentId}/fetch-knowledge`);
+    knowledgeInput.readOnly = false;
+    knowledgeLoading = false;
     knowledgeInput.value = ticket.knowledgeDraft || "";
     fillDetail(ticket);
   } catch (e) {
+    knowledgeLoading = false;
+    knowledgeInput.readOnly = false;
     alert(e.message);
   } finally {
     fetchKnowledgeBtn.disabled = false;
@@ -272,6 +326,7 @@ confirmKnowledgeBtn.onclick = async () => {
     });
     fillDetail(ticket);
     loadTickets();
+    autoGenerateAnswer(ticket.id);
     setStep(3);
   } catch (e) {
     alert(e.message);
@@ -282,13 +337,21 @@ confirmKnowledgeBtn.onclick = async () => {
 
 generateAnswerBtn.onclick = async () => {
   if (!currentId) return;
+  if (answerLoading) return;
   try {
+    answerLoading = true;
+    answerInput.value = answerInput.value || "生成中，请稍候...";
+    answerInput.readOnly = true;
     generateAnswerBtn.disabled = true;
     generateAnswerBtn.innerText = "生成中...";
     const ticket = await postAction(`/api/agent/tickets/${currentId}/generate-answer`);
+    answerInput.readOnly = false;
+    answerLoading = false;
     answerInput.value = ticket.answerDraft || "";
     fillDetail(ticket);
   } catch (e) {
+    answerLoading = false;
+    answerInput.readOnly = false;
     alert(e.message);
   } finally {
     generateAnswerBtn.disabled = false;
@@ -306,22 +369,6 @@ confirmAnswerBtn.onclick = async () => {
     fillDetail(ticket);
     await loadTickets();
     alert("已完成并推送给客户");
-    currentId = null;
-    readonlyMode = false;
-    ticketTitle.innerText = "请选择一个工单";
-    if (ticketStatusDot) {
-      ticketStatusDot.style.background = "var(--accent)";
-      ticketStatusDot.title = "";
-    }
-    ticketMeta.innerText = "";
-    originalQuestion.innerText = "";
-    structuredInput.value = "";
-    knowledgeInput.value = "";
-    answerInput.value = "";
-    logsBox.innerText = "暂无记录";
-    stepNodes.forEach((node) => node.classList.remove("active", "done"));
-    setStep(1);
-    applyReadonly();
   } catch (e) {
     alert(e.message);
   } finally {
@@ -353,6 +400,74 @@ if (backToList) {
     setStep(1);
     applyReadonly();
   };
+}
+
+if (sendAgentMsgBtn) {
+  sendAgentMsgBtn.onclick = async () => {
+    if (!currentId) return;
+    const text = (agentMsgInput.value || "").trim();
+    if (!text) return;
+    sendAgentMsgBtn.disabled = true;
+    sendAgentMsgBtn.innerText = "发送中...";
+    try {
+      const ticket = await postAction(`/api/agent/tickets/${currentId}/message`, { text });
+      agentMsgInput.value = "";
+      fillDetail(ticket);
+      loadTickets();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      sendAgentMsgBtn.disabled = false;
+      sendAgentMsgBtn.innerText = "发送";
+    }
+  };
+}
+
+if (toggleChatBtn) {
+  toggleChatBtn.onclick = () => {
+    const hide = layoutGrid.classList.toggle("hide-chat");
+    if (hide) {
+      layoutGrid.style.gridTemplateColumns = "260px 1fr";
+      if (chatPanel) chatPanel.style.display = "none";
+    } else {
+      layoutGrid.style.gridTemplateColumns = "260px 1fr 340px";
+      if (chatPanel) chatPanel.style.display = "flex";
+    }
+    if (toggleChatBtn) toggleChatBtn.innerText = hide ? "显示对话" : "隐藏对话";
+  };
+}
+async function autoFetchKnowledge(id) {
+  if (knowledgeLoading || !id) return;
+  try {
+    knowledgeLoading = true;
+    knowledgeInput.value = knowledgeInput.value || "召回中，请稍候...";
+    knowledgeInput.readOnly = true;
+    const ticket = await postAction(`/api/agent/tickets/${id}/fetch-knowledge`);
+    knowledgeInput.readOnly = false;
+    knowledgeLoading = false;
+    knowledgeInput.value = ticket.knowledgeDraft || "";
+    fillDetail(ticket);
+  } catch (e) {
+    knowledgeLoading = false;
+    knowledgeInput.readOnly = false;
+  }
+}
+
+async function autoGenerateAnswer(id) {
+  if (answerLoading || !id) return;
+  try {
+    answerLoading = true;
+    answerInput.value = answerInput.value || "生成中，请稍候...";
+    answerInput.readOnly = true;
+    const ticket = await postAction(`/api/agent/tickets/${id}/generate-answer`);
+    answerInput.readOnly = false;
+    answerLoading = false;
+    answerInput.value = ticket.answerDraft || "";
+    fillDetail(ticket);
+  } catch (e) {
+    answerLoading = false;
+    answerInput.readOnly = false;
+  }
 }
 
 async function loadCompleted() {

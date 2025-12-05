@@ -19,6 +19,7 @@ const myTicketsBtn = document.getElementById("myTicketsBtn");
 const drawerPanel = document.getElementById("drawerPanel");
 const myTicketsDot = document.getElementById("myTicketsDot");
 const statusFilter = document.getElementById("statusFilter");
+const newTicketBtn = document.getElementById("newTicketBtn");
 
 function clearMessages() {
   messagesEl.innerHTML = "";
@@ -252,7 +253,19 @@ async function sendMessage() {
   userInput.value = "";
   appendBubble(text, "me");
   try {
-    const ticket = await createTicket(text);
+    let ticket;
+    if (activeTicket && activeTicket.id) {
+      const resp = await fetch(`/api/tickets/${activeTicket.id}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: clientId, text }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "发送失败");
+      ticket = data.ticket;
+    } else {
+      ticket = await createTicket(text);
+    }
     renderTicket(ticket);
     loadTicketList();
   } catch (e) {
@@ -270,6 +283,15 @@ userInput.addEventListener("keydown", (e) => {
 statusFilter.addEventListener("change", () => {
   loadTicketList();
 });
+
+if (newTicketBtn) {
+  newTicketBtn.onclick = () => {
+    activeTicket = null;
+    clearMessages();
+    userInput.value = "";
+    summaryEl.innerHTML = `暂未创建工单，如需帮助请直接提问。`;
+  };
+}
 function toggleDrawer() {
   if (drawerPanel.classList.contains("hidden")) {
     drawerPanel.classList.remove("hidden");
@@ -312,7 +334,7 @@ function startDotPolling() {
     if (resp.ok) {
       setMyTicketsDot(data.tickets || []);
     }
-  }, 6000);
+  }, 3000);
 }
 
 loadTicketList();

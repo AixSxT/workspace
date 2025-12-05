@@ -3,9 +3,10 @@ const fs = require("fs");
 const path = require("path");
 const url = require("url");
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 2222;
 const DATA_FILE = path.join(__dirname, "data", "tickets.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
+const LOG_FILE = path.join(__dirname, "logs", "app.log");
 const VOLC_API_KEY =
   process.env.API_KEY ||
   process.env.VOLC_API_KEY ||
@@ -245,6 +246,11 @@ function generateId() {
   return `T${now}${rand}`;
 }
 
+function logLine(level, message, extra) {
+  const line = `[${new Date().toISOString()}] [${level}] ${message}${extra ? " " + JSON.stringify(extra) : ""}\n`;
+  fs.promises.appendFile(LOG_FILE, line).catch(() => {});
+}
+
 async function handleApi(req, res) {
   const parsed = url.parse(req.url, true);
   const pathname = parsed.pathname || "";
@@ -295,6 +301,36 @@ async function handleApi(req, res) {
     pushLog(ticket, "system", "rewrite", structured);
     const tickets = await readTickets();
     tickets.push(ticket);
+    await writeTickets(tickets);
+    return sendJSON(res, 200, { ticket });
+  }
+
+  // client: append message to existing ticket
+  if (segments.length === 4 && segments[0] === "api" && segments[1] === "tickets" && segments[3] === "message" && req.method === "POST") {
+    const ticketId = segments[2];
+    const body = await parseBody(req).catch((err) =>
+      sendJSON(res, 400, { error: err.message })
+    );
+    if (!body) return;
+    const userId = body.userId || "guest";
+    const text = (body.text || "").trim();
+    if (!text) return sendJSON(res, 400, { error: "text is required" });
+    const tickets = await readTickets();
+    const ticket = tickets.find((t) => t.id === ticketId && t.userId === userId);
+    if (!ticket) return sendJSON(res, 404, { error: "ticket not found" });
+    ticket.messages = ticket.messages || [];
+    ticket.messages.push({ role: "user", text, at: new Date().toISOString() });
+    ticket.originalQuestion = `${ticket.originalQuestion}\n补充：${text}`;
+    ticket.structuredDraft = await rewriteQuestion(ticket.originalQuestion);
+    ticket.structuredFinal = null;
+    ticket.knowledgeDraft = null;
+    ticket.knowledgeFinal = null;
+    ticket.answerDraft = null;
+    ticket.answerFinal = null;
+    ticket.status = "pending_cs";
+    ticket.step = "structure_review";
+    ticket.updatedAt = new Date().toISOString();
+    pushLog(ticket, "user", "message", text);
     await writeTickets(tickets);
     return sendJSON(res, 200, { ticket });
   }
@@ -369,6 +405,27 @@ async function handleApi(req, res) {
     return sendJSON(res, 200, { ok: true });
   }
 
+  // agent: append message to user
+  if (segments.length === 5 && segments[0] === "api" && segments[1] === "agent" && segments[2] === "tickets" && segments[4] === "message" && req.method === "POST") {
+    const ticketId = segments[3];
+    const body = await parseBody(req).catch((err) =>
+      sendJSON(res, 400, { error: err.message })
+    );
+    if (!body) return;
+    const text = (body.text || "").trim();
+    if (!text) return sendJSON(res, 400, { error: "text is required" });
+    const tickets = await readTickets();
+    const ticket = tickets.find((t) => t.id === ticketId);
+    if (!ticket) return sendJSON(res, 404, { error: "ticket not found" });
+    ticket.messages = ticket.messages || [];
+    ticket.messages.push({ role: "agent", text, at: new Date().toISOString() });
+    ticket.newReply = true;
+    ticket.updatedAt = new Date().toISOString();
+    pushLog(ticket, "agent", "message", text);
+    await writeTickets(tickets);
+    return sendJSON(res, 200, { ticket });
+  }
+
   // client: cancel ticket (e.g., skip confirmation)
   if (segments.length === 4 && segments[0] === "api" && segments[1] === "tickets" && segments[3] === "cancel" && req.method === "POST") {
     const ticketId = segments[2];
@@ -393,8 +450,7 @@ async function handleApi(req, res) {
     const tickets = await readTickets();
     const statusFilter = parsed.query.status || "pending"; // pending | done | all
     let list = tickets;
-    // 不推送未确认的 collecting
-    list = list.filter((t) => t.status !== "collecting" && t.status !== "canceled");
+    list = list.filter((t) => t.status !== "canceled");
     if (statusFilter === "pending") {
       list = list.filter((t) => t.status !== "done");
     } else if (statusFilter === "done") {
@@ -512,6 +568,12 @@ async function handleApi(req, res) {
     ticket.status = "done";
     ticket.step = "done";
     ticket.newReply = true;
+    ticket.messages = ticket.messages || [];
+    ticket.messages.push({
+      role: "answer",
+      text: answer,
+      at: new Date().toISOString(),
+    });
     ticket.updatedAt = new Date().toISOString();
     pushLog(ticket, "agent", "confirm-answer", answer);
     await writeTickets(tickets);
@@ -568,6 +630,7 @@ async function handleApi(req, res) {
 }
 
 const server = http.createServer(async (req, res) => {
+  const start = Date.now();
   const parsed = url.parse(req.url, true);
   const pathname = parsed.pathname || "/";
   if (pathname.startsWith("/api")) {
@@ -575,8 +638,15 @@ const server = http.createServer(async (req, res) => {
       await handleApi(req, res);
     } catch (e) {
       console.error(e);
+      logLine("error", "api_error", { url: req.url, method: req.method, err: String(e) });
       sendJSON(res, 500, { error: "internal error" });
     }
+    logLine("info", "api_request", {
+      url: req.url,
+      method: req.method,
+      ms: Date.now() - start,
+      ua: req.headers["user-agent"] || "",
+    });
     return;
   }
   serveStatic(req, res, pathname);
