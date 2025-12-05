@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>客服中台 - 人康工具群答疑</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    .layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+    .sidebar {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .ticket-tile {
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: #0c1426;
+      margin-bottom: 12px;
+      cursor: pointer;
+      transition: border 0.2s ease, transform 0.15s ease;
+    }
+    .ticket-tile:hover {
+      border-color: #2f80ed;
+      transform: translateY(-1px);
+    }
+    .ticket-tile.active {
+      border-color: #2f80ed;
+      background: rgba(90,168,255,0.08);
+    }
+    .dot-small {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .section {
+      padding: 16px;
+      margin-bottom: 14px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: #0c1426;
+    }
+    .section h4 {
+      margin: 0 0 10px 0;
+      font-size: 16px;
+    }
+    textarea {
+      min-height: 90px;
+    }
+    .logs {
+      max-height: 180px;
+      overflow: auto;
+      font-size: 13px;
+      line-height: 1.5;
+      background: #0c1426;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px;
+    }
+    .stepper {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+    .step-node {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .step-bubble {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #0c1426;
+      border: 1px solid var(--border);
+      transition: all 0.2s ease;
+    }
+    .step-node.active .step-bubble {
+      background: linear-gradient(135deg, #3b82f6, #5aa8ff);
+      border-color: transparent;
+      box-shadow: 0 12px 22px rgba(90,168,255,0.28);
+      color: #0b1224;
+    }
+    .step-node.active {
+      color: #e7ecf8;
+    }
+    .step-node.done .step-bubble {
+      background: #34d399;
+      color: #0b1224;
+      border-color: transparent;
+    }
+    .step-connector {
+      flex: 1;
+      height: 2px;
+      background: var(--border);
+    }
+    .step-panel {
+      display: none;
+    }
+    .step-panel.active {
+      display: block;
+      animation: fadeIn 0.2s ease;
+    }
+    .panel-full {
+      height: 82vh;
+      min-height: 70vh;
+      display: flex;
+      flex-direction: column;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (max-width: 960px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .sidebar {
+        height: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="flex glass" style="padding:16px 20px; align-items:center; gap:16px;">
+      <div class="brand">
+        <div class="dot" style="background:linear-gradient(135deg,#2563eb,#2f80ed);"></div>
+        <div>人康工具答疑</div>
+      </div>
+      <div class="tag">客服端</div>
+      <div class="spacer"></div>
+      <button id="completedBtn" class="btn ghost">已完成工单</button>
+    </div>
+
+    <div class="layout" style="margin-top:18px;">
+      <div class="glass sidebar panel-full" id="ticketSidebar">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; gap:8px;">
+          <div style="font-weight:700;">工单列表</div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <select id="agentFilter" class="pill" style="padding:6px 10px; background:#0c1426; color:var(--primary); border-color:var(--border);">
+              <option value="all">全部</option>
+              <option value="pending">待执行</option>
+              <option value="done">已完成</option>
+            </select>
+            <button id="refreshBtn" class="btn ghost" style="padding:6px 10px;">刷新</button>
+          </div>
+        </div>
+        <div id="ticketTiles" class="no-scrollbar" style="overflow:auto; flex:1;"></div>
+      </div>
+
+      <div class="glass panel-full" style="padding:18px;">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div class="dot-small" id="ticketStatusDot" style="background:#5aa8ff;"></div>
+            <div id="ticketTitle" style="font-weight:700; font-size:18px;">请选择一个工单</div>
+          </div>
+          <div class="spacer"></div>
+          <button id="backToList" class="btn ghost" style="padding:6px 12px;">返回</button>
+        </div>
+        <div id="ticketMeta" class="fade" style="margin-bottom:10px;"></div>
+
+        <div id="stepper" class="stepper">
+          <div class="step-node active" data-step="1">
+            <span class="step-bubble">1</span><span>改写确认</span>
+          </div>
+          <div class="step-connector"></div>
+          <div class="step-node" data-step="2">
+            <span class="step-bubble">2</span><span>知识确认</span>
+          </div>
+          <div class="step-connector"></div>
+          <div class="step-node" data-step="3">
+            <span class="step-bubble">3</span><span>回答确认</span>
+          </div>
+        </div>
+
+        <div id="contentArea" class="no-scrollbar" style="flex:1; overflow:auto;">
+          <div class="section step-panel active" id="step-1">
+            <h4>步骤 1：确认结构化问题</h4>
+            <div style="display:grid; grid-template-columns:1fr; gap:10px;">
+              <div class="pill" style="font-weight:700;">客户原话</div>
+              <div class="pill" id="originalQuestion" style="min-height:80px; white-space:pre-wrap; line-height:1.5;"></div>
+              <div class="pill" style="font-weight:700;">AI 改写</div>
+            <textarea id="structuredInput" class="no-scrollbar" placeholder="结构化后的描述（编辑后确认）" style="min-height:120px;"></textarea>
+            </div>
+            <div style="display:flex; gap:10px; margin-top:12px;">
+              <button id="confirmStructureBtn" class="btn">确认并进入下一步</button>
+            </div>
+          </div>
+
+          <div class="section step-panel" id="step-2">
+            <h4>步骤 2：知识召回确认</h4>
+            <div style="display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+              <button id="fetchKnowledgeBtn" class="btn ghost">自动召回知识</button>
+            </div>
+            <textarea id="knowledgeInput" class="no-scrollbar" placeholder="召回的知识内容"></textarea>
+            <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+              <button id="backToStep1" class="btn ghost">返回上一步</button>
+              <button id="confirmKnowledgeBtn" class="btn">确认并进入下一步</button>
+            </div>
+          </div>
+
+          <div class="section step-panel" id="step-3">
+            <h4>步骤 3：生成并确认回答</h4>
+            <div style="display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+              <button id="generateAnswerBtn" class="btn ghost">生成回答</button>
+            </div>
+            <textarea id="answerInput" class="no-scrollbar" placeholder="最终给客户的回答话术"></textarea>
+            <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+              <button id="backToStep2" class="btn ghost">返回上一步</button>
+              <button id="confirmAnswerBtn" class="btn">确认完成</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <h4>操作记录</h4>
+            <div class="logs no-scrollbar" id="logsBox">暂无记录</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="completedModal">
+    <div class="glass modal">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+        <div style="font-weight:700; font-size:18px;">已完成工单</div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <a href="/api/agent/export" class="btn ghost" download>下载 Excel</a>
+          <button id="closeModalBtn" class="btn ghost">关闭</button>
+        </div>
+      </div>
+      <div id="completedTableWrap" class="no-scrollbar" style="max-height:60vh; overflow:auto;"></div>
+    </div>
+  </div>
+
+  <script src="/agent.js"></script>
+</body>
+</html>
