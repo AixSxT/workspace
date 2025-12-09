@@ -15,10 +15,21 @@ const VOLC_BASE_URL =
   process.env.BASE_URL || process.env.VOLC_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3";
 const MODEL_NAME =
   process.env.MODEL_NAME || process.env.VOLC_MODEL_NAME || "doubao-seed-1-6-250615";
+
+// ==========================================
+// Part 2: Coze Bot 配置 (知识召回)
+// ==========================================
+
+// ✅ 新 Token
 const COZE_TOKEN =
   process.env.COZE_TOKEN ||
-  "sat_kiWBS3pwQwV90JaXOslihMbimBhHpUlGUllS3yuAnZNiUe1BEXSjz3OFPSrxz2l9";
-const COZE_WORKFLOW_ID = process.env.COZE_WORKFLOW_ID || "7577424146512134144";
+  "cztei_h3vCW6bnikjfPzQCGAWVvaX9ovc8LH1nW3xcY0AImnUdZHvyjuqD9TunnjCyE2TqV";
+
+// ✅ 你的 Bot ID (原 Workflow ID 已弃用)
+const COZE_BOT_ID = process.env.COZE_BOT_ID || "7581475118338670626";
+
+// ✅ 接口地址变更为 V3 Chat
+const COZE_API_URL = "https://api.coze.cn/v3/chat";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -160,42 +171,115 @@ async function rewriteQuestion(text) {
 }
 
 async function fetchKnowledge(structured) {
+  // console.log(`[Coze] 正在调用 Bot (ID: ${COZE_BOT_ID})...`);
+
   const payload = {
-    workflow_id: COZE_WORKFLOW_ID,
-    parameters: { input: structured || "用户问题" },
+    bot_id: COZE_BOT_ID,
+    user_id: "sys_recall_user",
+    stream: true,
+    auto_save_history: false,
+    additional_messages: [
+      {
+        role: "user",
+        content: structured || "用户问题",
+        content_type: "text",
+      },
+    ],
   };
-  const resp = await fetch("https://api.coze.cn/v1/workflow/stream_run", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${COZE_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`知识召回失败：${resp.status} ${text}`);
-  }
-  const text = await resp.text();
-  const lines = text.split("\n").filter((l) => l.startsWith("data:"));
-  let content = "";
-  for (const l of lines) {
-    try {
-      const obj = JSON.parse(l.replace(/^data:\s*/, ""));
-      if (obj.content) content = obj.content;
-    } catch (e) {
-      continue;
-    }
-  }
-  if (!content) throw new Error("未获得知识内容");
-  let parsed = content;
+
   try {
-    const inner = JSON.parse(content);
-    if (inner.output) parsed = inner.output;
-  } catch (e) {
-    // keep original
+    const resp = await fetch(COZE_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${COZE_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`HTTP ${resp.status} 错误: ${text.substring(0, 200)}`);
+    }
+
+    const text = await resp.text();
+    const lines = text.split("\n");
+    let fullContent = "";
+    let currentEvent = "";
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+
+      // 1. 捕获事件行
+      if (trimmedLine.startsWith("event:")) {
+        currentEvent = trimmedLine.substring(6).trim();
+      }
+      // 2. 捕获数据行
+      else if (trimmedLine.startsWith("data:")) {
+        try {
+          const jsonStr = trimmedLine.substring(5).trim();
+          if (!jsonStr) continue;
+          const data = JSON.parse(jsonStr);
+
+          // 核心修改：不再限制 type === 'answer'，只要有 content 就抓
+          if (currentEvent === "conversation.message.delta") {
+            if (data.message && data.message.content) {
+              fullContent += data.message.content;
+            } else if (data.content) {
+              fullContent += data.content;
+            }
+          }
+          // 兜底：completed 事件
+          else if (currentEvent === "conversation.message.completed") {
+            if (data.message && data.message.content) {
+              if (!fullContent) fullContent = data.message.content;
+            }
+          }
+        } catch (e) {
+          // 忽略解析错误
+        }
+      }
+    }
+
+    if (!fullContent) {
+      const debugSnippet = text.substring(0, 500).replace(/\n/g, "\\n");
+      console.error("[Coze] 未获取到有效内容，返回空字符串。原始片段:", debugSnippet);
+      return "知识召回暂无结果，请稍后再试。";
+    }
+
+    // ==========================================
+    // 🧹 智能清洗区域：剔除系统日志
+    // ==========================================
+
+    // 1. 去除 Markdown 代码块标记 (```json ... ```)
+    let cleanContent = fullContent;
+    if (cleanContent.startsWith("```json")) {
+      cleanContent = cleanContent.replace(/^```json\s*/, "").replace(/\s*```$/, "");
+    }
+
+    // 2. 剔除 "msg_type":"knowledge_recall" 这类系统日志
+    if (cleanContent.includes('"msg_type":"knowledge_recall"')) {
+      const lastBraceIndex = cleanContent.lastIndexOf("}");
+      if (lastBraceIndex !== -1 && lastBraceIndex < cleanContent.length - 5) {
+        const realAnswer = cleanContent.substring(lastBraceIndex + 1).trim();
+        if (realAnswer) {
+          cleanContent = realAnswer;
+        }
+      }
+    }
+
+    // 3. 最终尝试解析 (防止 Bot 只返回了一个纯 JSON)
+    try {
+      const inner = JSON.parse(cleanContent);
+      if (inner.output) return inner.output;
+      return cleanContent;
+    } catch (e) {
+      return cleanContent.trim();
+    }
+  } catch (err) {
+    console.error("[Coze] 异常:", err.message);
+    return `知识召回异常: ${err.message}`;
   }
-  return String(parsed).trim();
 }
 
 async function generateAnswer(structured, knowledge) {

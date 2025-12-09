@@ -1,0 +1,17 @@
+# 依赖包
+node_modules/
+
+# 环境变量与密钥 (千万别传)
+.env
+
+# 日志文件
+logs/
+*.log
+npm-debug.log*
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 数据库文件 (如果你不想传测试数据)
+data/tickets.json
